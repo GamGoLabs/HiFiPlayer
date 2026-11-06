@@ -1,0 +1,1 @@
+C:\dev\HiFiPlayer\app\src\main\cpp\CMakeLists.txt

@@ -1,0 +1,17 @@
+[
+{
+  "directory": "C:/dev/HiFiPlayer/app/.cxx/Debug/2i274a71/arm64-v8a",
+  "command": "C:\\Users\\ingsb\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android26 --sysroot=C:/Users/ingsb/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dhifiengine_EXPORTS -IC:/dev/HiFiPlayer/app/src/main/cpp/third_party/dr_libs -isystem C:/Users/ingsb/.gradle/caches/8.9/transforms/e6fde8ad6dd13e13dc38df3d6592def9/transformed/oboe-1.9.3/prefab/modules/oboe/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++17 -fno-limit-debug-info  -fPIC -O3 -Wall -Wno-unused-function -std=c++17 -o CMakeFiles\\hifiengine.dir\\jni_bridge.cpp.o -c C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\jni_bridge.cpp",
+  "file": "C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\jni_bridge.cpp"
+},
+{
+  "directory": "C:/dev/HiFiPlayer/app/.cxx/Debug/2i274a71/arm64-v8a",
+  "command": "C:\\Users\\ingsb\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android26 --sysroot=C:/Users/ingsb/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dhifiengine_EXPORTS -IC:/dev/HiFiPlayer/app/src/main/cpp/third_party/dr_libs -isystem C:/Users/ingsb/.gradle/caches/8.9/transforms/e6fde8ad6dd13e13dc38df3d6592def9/transformed/oboe-1.9.3/prefab/modules/oboe/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++17 -fno-limit-debug-info  -fPIC -O3 -Wall -Wno-unused-function -std=c++17 -o CMakeFiles\\hifiengine.dir\\AudioEngine.cpp.o -c C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\AudioEngine.cpp",
+  "file": "C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\AudioEngine.cpp"
+},
+{
+  "directory": "C:/dev/HiFiPlayer/app/.cxx/Debug/2i274a71/arm64-v8a",
+  "command": "C:\\Users\\ingsb\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android26 --sysroot=C:/Users/ingsb/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dhifiengine_EXPORTS -IC:/dev/HiFiPlayer/app/src/main/cpp/third_party/dr_libs -isystem C:/Users/ingsb/.gradle/caches/8.9/transforms/e6fde8ad6dd13e13dc38df3d6592def9/transformed/oboe-1.9.3/prefab/modules/oboe/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++17 -fno-limit-debug-info  -fPIC -O3 -Wall -Wno-unused-function -std=c++17 -o CMakeFiles\\hifiengine.dir\\PcmSource.cpp.o -c C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\PcmSource.cpp",
+  "file": "C:\\dev\\HiFiPlayer\\app\\src\\main\\cpp\\PcmSource.cpp"
+}
+]
