@@ -2,6 +2,7 @@ package com.hifiplayer.data
 
 import android.content.Context
 import android.util.Log
+import com.hifiplayer.audio.AudioFocusManager
 import com.hifiplayer.audio.BitPerfectManager
 import com.hifiplayer.audio.NativeAudioEngine
 import com.hifiplayer.domain.EngineState
@@ -32,6 +33,47 @@ class PlaybackController(private val context: Context) {
     private var bpInfo = ""
     private var bpEnabled = true
     private var lastState = EngineState.IDLE
+    private var resumeOnFocus = false
+    private var ducked = false
+
+    private val focus = AudioFocusManager(context, object : AudioFocusManager.Listener {
+        override fun onFocusLost(permanent: Boolean) {
+            scope.launch {
+                val wasPlaying = engine.state() == EngineState.PLAYING.ordinal
+                Log.d(TAG, "foco perdido (permanente=$permanent, sonaba=$wasPlaying)")
+                if (wasPlaying) engine.pause()
+                resumeOnFocus = wasPlaying && !permanent
+                if (permanent) restoreVolume()   // si luego se reanuda a mano, que suene a volumen pleno
+                publish()
+            }
+        }
+        override fun onDuck() {
+            scope.launch {
+                Log.d(TAG, "atenuando a ${(DUCK_VOLUME * 100).toInt()}%")
+                ducked = true
+                engine.setVolume(DUCK_VOLUME)
+            }
+        }
+        override fun onFocusGained() {
+            scope.launch {
+                Log.d(TAG, "foco recuperado (reanudar=$resumeOnFocus, atenuado=$ducked)")
+                restoreVolume()
+                if (resumeOnFocus) { resumeOnFocus = false; engine.play(); publish() }
+            }
+        }
+    })
+
+    private fun restoreVolume() {
+        if (ducked) { ducked = false; engine.setVolume(1f); Log.d(TAG, "volumen restaurado al 100%") }
+    }
+
+    /** Pide foco y arranca/reanuda. Sin foco (p. ej. durante una llamada) no suena. */
+    private fun startPlayback(): Boolean {
+        if (!focus.request()) { Log.w(TAG, "foco de audio denegado: no se reproduce"); return false }
+        resumeOnFocus = false
+        restoreVolume()
+        return engine.play()
+    }
 
     init {
         scope.launch { while (isActive) { tick(); delay(250) } }
@@ -39,18 +81,20 @@ class PlaybackController(private val context: Context) {
 
     // ---- API pública
     fun setQueue(tracks: List<Track>) = scope.launch { queue = tracks; playIndex(0) }
-    fun play() = scope.launch { engine.play(); publish() }
-    fun pause() = scope.launch { engine.pause(); publish() }
+    fun play() = scope.launch { Log.d(TAG, "cmd play"); startPlayback(); publish() }
+    fun pause() = scope.launch { Log.d(TAG, "cmd pause"); resumeOnFocus = false; engine.pause(); publish() }
     fun togglePlayPause() = scope.launch {
-        if (engine.state() == EngineState.PLAYING.ordinal) engine.pause() else engine.play()
+        Log.d(TAG, "cmd toggle (estado=${engine.state()})")
+        if (engine.state() == EngineState.PLAYING.ordinal) { resumeOnFocus = false; engine.pause() } else startPlayback()
         publish()
     }
-    fun next() = scope.launch { if (index + 1 < queue.size) playIndex(index + 1) }
+    fun next() = scope.launch { Log.d(TAG, "cmd next"); if (index + 1 < queue.size) playIndex(index + 1) }
     fun previous() = scope.launch {
+        Log.d(TAG, "cmd previous")
         if (engine.positionMs() > 3000 || index <= 0) engine.seek(0) else playIndex(index - 1)
         publish()
     }
-    fun seek(ms: Long) = scope.launch { engine.seek(ms); publish() }
+    fun seek(ms: Long) = scope.launch { Log.d(TAG, "cmd seek $ms"); engine.seek(ms); publish() }
     fun setBitPerfect(enabled: Boolean) = scope.launch {
         bpEnabled = enabled
         engine.setBitPerfect(enabled)
@@ -72,7 +116,7 @@ class PlaybackController(private val context: Context) {
                 index = i
                 lastTransitions = 0
                 if (bpEnabled) engine.format().let { bpInfo = bitPerfect.apply(it[0], it[1], it[2]) }
-                engine.play()
+                startPlayback()
                 queueNext()
                 streamInfo = engine.describe()
                 Log.d(TAG, "Reproduciendo [$i] ${queue[i].title} | $streamInfo | $bpInfo")
@@ -91,6 +135,11 @@ class PlaybackController(private val context: Context) {
     private fun tick() {
         if (queue.isEmpty()) return
         val st = EngineState.from(engine.state())
+        // Atenuado y de pronto empieza una llamada (se contestó mientras sonaba): pausar hasta que termine
+        if (ducked && st == EngineState.PLAYING && focus.inConversation()) {
+            Log.d(TAG, "conversacion en curso mientras estaba atenuado -> pausa hasta que termine")
+            engine.pause(); resumeOnFocus = true
+        }
         val tr = engine.transitions()
         if (tr > lastTransitions) {
             index += tr - lastTransitions
@@ -100,6 +149,7 @@ class PlaybackController(private val context: Context) {
             streamInfo = engine.describe()
         }
         if (st == EngineState.ENDED && index + 1 < queue.size) { playIndex(index + 1); return }
+        if (st == EngineState.ENDED) focus.abandon()   // fin de la cola: liberar el foco
         if (st != lastState) { Log.d(TAG, "Estado motor: $lastState -> $st"); lastState = st }
         publish()
     }
@@ -115,5 +165,9 @@ class PlaybackController(private val context: Context) {
         )
     }
 
-    private companion object { const val TAG = "HiFi.Controller" }
+    private companion object {
+        const val TAG = "HiFi.Controller"
+        /** Ganancia lineal durante la atenuación: 0.4 = 40 % de amplitud (unos -8 dB). */
+        const val DUCK_VOLUME = 0.4f
+    }
 }

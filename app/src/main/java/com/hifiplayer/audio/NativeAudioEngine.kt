@@ -18,6 +18,8 @@ object NativeAudioEngine {
     fun state() = nState()
     fun transitions() = nTransitions()
     fun setBitPerfect(on: Boolean) = nSetBitPerfect(on)
+    /** Ganancia lineal 0..1. 1.0 = sin tocar las muestras (bit-perfect). */
+    fun setVolume(v: Float) = nSetVolume(v)
     /** [sampleRate, channels, bitsPerSample] de la pista actual. */
     fun format(): IntArray = nFormat()
     fun describe(): String = nDescribe()
@@ -36,6 +38,7 @@ object NativeAudioEngine {
     private external fun nState(): Int
     private external fun nTransitions(): Int
     private external fun nSetBitPerfect(on: Boolean)
+    private external fun nSetVolume(v: Float)
     private external fun nFormat(): IntArray
     private external fun nDescribe(): String
 }

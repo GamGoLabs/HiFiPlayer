@@ -110,6 +110,8 @@ bool AudioEngine::openStreamLocked() {
 
     mStream->setBufferSizeInFrames(mStream->getFramesPerBurst() * 8);   // musica: priorizar estabilidad
     mRing = std::make_unique<RingBuffer>(static_cast<size_t>(in.sampleRate) * mFrameBytes);   // ~1 s
+    mGainStep = 1.0f / (0.08f * static_cast<float>(in.sampleRate));   // rampa completa 0->1 en ~80 ms
+    mCurGain = mTargetGain.load();   // si se abre atenuado, empezar ya atenuado
     LOGD("Stream: api=%s %d Hz fmt=%s sharing=%s perf=%s burst=%d",
          oboe::convertToText(mStream->getAudioApi()), mStream->getSampleRate(),
          oboe::convertToText(mStream->getFormat()), oboe::convertToText(mStream->getSharingMode()),
@@ -239,7 +241,8 @@ void AudioEngine::decoderLoop() {
     std::vector<int32_t> pcm(kChunk * mChannels);
     std::vector<uint8_t> out(kChunk * mFrameBytes);
     uint64_t lastUnderruns = 0;
-    LOGD("decoder: inicio");
+    uint64_t srcPos = mStartFrame;   // frame alcanzado dentro del archivo actual
+    LOGD("decoder: inicio (desde frame %llu)", (unsigned long long)srcPos);
 
     while (mRun.load()) {
         uint64_t u = mUnderruns.load();
@@ -249,6 +252,15 @@ void AudioEngine::decoderLoop() {
 
         uint64_t n = mSource->readFrames(pcm.data(), kChunk);
         if (n == 0) {
+            const uint64_t declared = mSource->info().totalFrames;
+            if (declared && srcPos != declared)
+                LOGW("EOF en frame %llu pero la cabecera declara %llu (dif %lld frames = %.1f s): "
+                     "archivo truncado, cabecera erronea o error de decodificacion",
+                     (unsigned long long)srcPos, (unsigned long long)declared,
+                     (long long)declared - (long long)srcPos,
+                     (double)((long long)declared - (long long)srcPos) / mSource->info().sampleRate);
+            else
+                LOGD("EOF correcto en frame %llu", (unsigned long long)srcPos);
             std::unique_ptr<PcmSource> next;
             {
                 std::lock_guard<std::mutex> s(mSrcMutex);
@@ -257,6 +269,7 @@ void AudioEngine::decoderLoop() {
             }
             if (next) {
                 mSource = std::move(next);
+                srcPos = 0;
                 std::lock_guard<std::mutex> t(mTimeMutex);
                 mBoundaries.push_back({mFramesWritten, mSource->info()});
                 LOGD("decoder: gapless en frame %llu", (unsigned long long)mFramesWritten);
@@ -269,17 +282,58 @@ void AudioEngine::decoderLoop() {
         convert(pcm.data(), n * mChannels, mOutFormat, out.data());
         mRing->write(out.data(), n * mFrameBytes);
         mFramesWritten += n;
+        srcPos += n;
     }
     LOGD("decoder: fin");
 }
 
 // ---------------------------------------------------------------- callback (tiempo real: sin logs, sin locks, sin malloc)
 
+// Tiempo real: sin locks, logs ni malloc. A volumen pleno NO modifica nada (bit-perfect intacto).
+void AudioEngine::applyGain(void* data, size_t frames) {
+    const float target = mTargetGain.load(std::memory_order_relaxed);
+    float g = mCurGain;
+    if (g == target && target == 1.0f) return;
+    const float step = mGainStep;
+    const uint32_t ch = mChannels;
+    auto next = [&]() {
+        if (g < target) { g += step; if (g > target) g = target; }
+        else if (g > target) { g -= step; if (g < target) g = target; }
+    };
+    switch (mOutFormat) {
+        case oboe::AudioFormat::I16: {
+            auto* p = static_cast<int16_t*>(data);
+            for (size_t f = 0; f < frames; ++f) {
+                next();
+                for (uint32_t c = 0; c < ch; ++c, ++p) *p = static_cast<int16_t>(static_cast<float>(*p) * g);
+            }
+            break;
+        }
+        case oboe::AudioFormat::I32: {
+            auto* p = static_cast<int32_t*>(data);
+            for (size_t f = 0; f < frames; ++f) {
+                next();
+                for (uint32_t c = 0; c < ch; ++c, ++p) *p = static_cast<int32_t>(static_cast<double>(*p) * g);
+            }
+            break;
+        }
+        default: {
+            auto* p = static_cast<float*>(data);
+            for (size_t f = 0; f < frames; ++f) {
+                next();
+                for (uint32_t c = 0; c < ch; ++c, ++p) *p *= g;
+            }
+        }
+    }
+    mCurGain = g;
+}
+
 oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream*, void* data, int32_t numFrames) {
     const size_t want = static_cast<size_t>(numFrames) * mFrameBytes;
     auto* dst = static_cast<uint8_t*>(data);
     size_t got = mRing->read(dst, want);
     mFramesRendered.fetch_add(got / mFrameBytes, std::memory_order_relaxed);
+    if (got) applyGain(data, got / mFrameBytes);
     if (got < want) {
         std::memset(dst + got, 0, want - got);
         if (mEof.load(std::memory_order_acquire) && mRing->readable() == 0) {

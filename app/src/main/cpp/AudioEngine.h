@@ -33,6 +33,8 @@ public:
     int state() const { return mState.load(); }
     int transitions();                 // nº de cambios gapless consumidos desde load()
     void setBitPerfect(bool on) { mBitPerfect.store(on); }
+    // Ganancia lineal 0..1 (atenuacion/ducking). 1.0 = camino bit-exact, sin tocar ni una muestra.
+    void setVolume(float v) { mTargetGain.store(v < 0.f ? 0.f : (v > 1.f ? 1.f : v)); }
     StreamInfo currentInfo();
     std::string describe();
 
@@ -48,6 +50,7 @@ private:
     void startDecoderLocked();
     void stopDecoderLocked();
     void decoderLoop();
+    void applyGain(void* data, size_t frames);   // solo hilo de audio
     void prefill();
     void resetTimelineLocked(uint64_t startFrame);
     void syncBoundariesLocked();       // requiere mTimeMutex
@@ -69,6 +72,9 @@ private:
     std::atomic<bool> mRun{false}, mEof{false}, mBitPerfect{true};
     std::atomic<int> mState{Idle};
     std::atomic<uint64_t> mFramesRendered{0}, mUnderruns{0};
+    std::atomic<float> mTargetGain{1.0f};
+    float mCurGain = 1.0f;        // solo hilo de audio (y apertura del stream, con el stream parado)
+    float mGainStep = 0.001f;     // incremento por frame (rampa ~80 ms, sin clics)
     uint64_t mFramesWritten = 0;       // solo hilo decoder
 
     // timeline (mTimeMutex)

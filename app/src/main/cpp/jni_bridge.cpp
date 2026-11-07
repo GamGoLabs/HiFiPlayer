@@ -20,6 +20,7 @@ JNIEXPORT jlong JNICALL FN(nDurationMs)(JNIEnv*, jobject) { return gEngine ? gEn
 JNIEXPORT jint JNICALL FN(nState)(JNIEnv*, jobject) { return gEngine ? gEngine->state() : 0; }
 JNIEXPORT jint JNICALL FN(nTransitions)(JNIEnv*, jobject) { return gEngine ? gEngine->transitions() : 0; }
 JNIEXPORT void JNICALL FN(nSetBitPerfect)(JNIEnv*, jobject, jboolean on) { if (gEngine) gEngine->setBitPerfect(on); }
+JNIEXPORT void JNICALL FN(nSetVolume)(JNIEnv*, jobject, jfloat v) { if (gEngine) gEngine->setVolume(v); }
 
 JNIEXPORT jintArray JNICALL FN(nFormat)(JNIEnv* env, jobject) {
     StreamInfo i = gEngine ? gEngine->currentInfo() : StreamInfo{};

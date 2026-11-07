@@ -5,3 +5,8 @@
 9340	9541	8156423112658298	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8
 16	9807	8156440351541353	CMakeFiles/hifiengine.dir/PcmSource.cpp.o	948761ceb0656b7b
 9808	9989	8156440353596039	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8
+14	3050	8157018883221304	CMakeFiles/hifiengine.dir/AudioEngine.cpp.o	3ec3eb51579b7158
+3051	3238	8157018885167203	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8
+28	2276	8157203081044694	CMakeFiles/hifiengine.dir/jni_bridge.cpp.o	eee76506b8bb676e
+15	3255	8157203090804928	CMakeFiles/hifiengine.dir/AudioEngine.cpp.o	3ec3eb51579b7158
+3255	3504	8157203093335901	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8
