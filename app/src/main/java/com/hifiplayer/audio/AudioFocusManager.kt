@@ -51,15 +51,18 @@ class AudioFocusManager(context: Context, private val listener: Listener) {
     }
 
     /** true si hay una llamada o videollamada en curso (sonando NO cuenta: ahí se atenúa). */
-    fun inConversation(): Boolean =
-        am.mode == AudioManager.MODE_IN_CALL || am.mode == AudioManager.MODE_IN_COMMUNICATION
+    fun inConversation(): Boolean = isConversation(am.mode)   // una sola lectura (cada una es una llamada binder)
 
-    private fun duckOrPause() {
-        if (inConversation()) listener.onFocusLost(false) else listener.onDuck()
+    private fun isConversation(mode: Int) =
+        mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+
+    private fun duckOrPause(mode: Int) {
+        if (isConversation(mode)) listener.onFocusLost(false) else listener.onDuck()
     }
 
     private fun onChange(change: Int) {
-        Log.d(TAG, "onAudioFocusChange($change) modoAudio=${am.mode}")
+        val mode = am.mode
+        Log.d(TAG, "onAudioFocusChange($change) modoAudio=$mode")
         when (change) {
             AudioManager.AUDIOFOCUS_GAIN -> listener.onFocusGained()
             AudioManager.AUDIOFOCUS_LOSS -> {
@@ -67,10 +70,10 @@ class AudioFocusManager(context: Context, private val listener: Listener) {
                 am.abandonAudioFocusRequest(focusRequest)
                 listener.onFocusLost(true)
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> duckOrPause()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> duckOrPause(mode)
             // Notas de voz y avisos suelen pedir foco "transitorio" a secas: se atenúa igual (ver DUCK_ON_TRANSIENT).
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ->
-                if (DUCK_ON_TRANSIENT) duckOrPause() else listener.onFocusLost(false)
+                if (DUCK_ON_TRANSIENT) duckOrPause(mode) else listener.onFocusLost(false)
         }
     }
 

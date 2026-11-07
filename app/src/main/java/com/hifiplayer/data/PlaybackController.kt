@@ -35,6 +35,7 @@ class PlaybackController(private val context: Context) {
     private var lastState = EngineState.IDLE
     private var resumeOnFocus = false
     private var ducked = false
+    private var modePoll = 0
 
     private val focus = AudioFocusManager(context, object : AudioFocusManager.Listener {
         override fun onFocusLost(permanent: Boolean) {
@@ -136,10 +137,13 @@ class PlaybackController(private val context: Context) {
         if (queue.isEmpty()) return
         val st = EngineState.from(engine.state())
         // Atenuado y de pronto empieza una llamada (se contestó mientras sonaba): pausar hasta que termine
-        if (ducked && st == EngineState.PLAYING && focus.inConversation()) {
-            Log.d(TAG, "conversacion en curso mientras estaba atenuado -> pausa hasta que termine")
-            engine.pause(); resumeOnFocus = true
-        }
+        if (ducked && st == EngineState.PLAYING) {
+            modePoll = (modePoll + 1) % 4            // tick de 250 ms -> comprobar 1 vez por segundo
+            if (modePoll == 0 && focus.inConversation()) {
+                Log.d(TAG, "conversacion en curso mientras estaba atenuado -> pausa hasta que termine")
+                engine.pause(); resumeOnFocus = true
+            }
+        } else modePoll = 0
         val tr = engine.transitions()
         if (tr > lastTransitions) {
             index += tr - lastTransitions
