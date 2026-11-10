@@ -1,10 +1,12 @@
 package com.hifiplayer.data
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.hifiplayer.audio.AudioFocusManager
-import com.hifiplayer.audio.BitPerfectManager
 import com.hifiplayer.audio.NativeAudioEngine
+import com.hifiplayer.audio.OutputRouter
+import com.hifiplayer.audio.OutputTelemetry
 import com.hifiplayer.domain.EngineState
 import com.hifiplayer.domain.PlayerUiState
 import com.hifiplayer.domain.Track
@@ -19,9 +21,9 @@ import java.util.concurrent.Executors
  */
 class PlaybackController(private val context: Context) {
     private val engine = NativeAudioEngine
-    private val bitPerfect = BitPerfectManager(context)
     private val dispatcher = Executors.newSingleThreadExecutor { Thread(it, "hifi-controller") }.asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val router = OutputRouter(context) { scope.launch { onRouteChanged() } }
 
     private val _ui = MutableStateFlow(PlayerUiState())
     val ui: StateFlow<PlayerUiState> = _ui
@@ -36,6 +38,11 @@ class PlaybackController(private val context: Context) {
     private var resumeOnFocus = false
     private var ducked = false
     private var modePoll = 0
+    private var lastPlan: OutputRouter.Plan? = null
+    private var lastPosMs = 0L
+    private var lastPlaying = false
+    private var recoverTries = 0
+    private var lastRecoverAt = 0L
 
     private val focus = AudioFocusManager(context, object : AudioFocusManager.Listener {
         override fun onFocusLost(permanent: Boolean) {
@@ -99,8 +106,9 @@ class PlaybackController(private val context: Context) {
     fun setBitPerfect(enabled: Boolean) = scope.launch {
         bpEnabled = enabled
         engine.setBitPerfect(enabled)
-        if (!enabled) { bitPerfect.clear(); bpInfo = "Bit-perfect desactivado" }
-        Log.d(TAG, "bitPerfect=$enabled (aplica desde la siguiente pista/reproducción)")
+        if (!enabled) router.clearMixer()
+        Log.d(TAG, "bitPerfect=$enabled -> reabriendo la salida")
+        reopenCurrent(resume = engine.state() == EngineState.PLAYING.ordinal, posMs = engine.positionMs())
         publish()
     }
 
@@ -116,10 +124,10 @@ class PlaybackController(private val context: Context) {
             if (fdLoad(queue[i], false)) {
                 index = i
                 lastTransitions = 0
-                if (bpEnabled) engine.format().let { bpInfo = bitPerfect.apply(it[0], it[1], it[2]) }
+                applyPlan()
                 startPlayback()
                 queueNext()
-                streamInfo = engine.describe()
+                refreshTelemetry()
                 Log.d(TAG, "Reproduciendo [$i] ${queue[i].title} | $streamInfo | $bpInfo")
                 publish(); return
             }
@@ -129,6 +137,42 @@ class PlaybackController(private val context: Context) {
         engine.stop(); publish()
     }
 
+    /** Lee las capacidades del DAC y se las pasa al motor para que negocie frecuencia/formato (ver OutputRouter). */
+    private fun applyPlan() {
+        val f = engine.format()                       // [frecuencia, canales, bits] de la pista cargada
+        val p = router.plan(f[0], f[1], f[2], bpEnabled)
+        lastPlan = p
+        engine.setOutputPlan(p.deviceId, p.rates, p.formats, p.forcedRate, p.forcedFmt)
+    }
+
+    private fun refreshTelemetry() {
+        streamInfo = engine.describe()
+        bpInfo = OutputTelemetry.line(engine.outputInfo(), lastPlan?.deviceName, lastPlan?.mixerNote.orEmpty())
+    }
+
+    /** Recarga la pista actual y renegocia la salida, conservando la posición (cambio de DAC, error, conmutador). */
+    private fun reopenCurrent(resume: Boolean, posMs: Long) {
+        if (index !in queue.indices) return
+        if (!fdLoad(queue[index], false)) { Log.e(TAG, "no se pudo reabrir '${queue[index].title}'"); return }
+        lastTransitions = 0
+        applyPlan()
+        if (posMs > 0) engine.seek(posMs)
+        if (resume) startPlayback()
+        queueNext()
+        refreshTelemetry()
+        Log.d(TAG, "salida reabierta en $posMs ms | $streamInfo | $bpInfo")
+        publish()
+    }
+
+    private fun onRouteChanged() {
+        if (index !in queue.indices) return
+        val st = EngineState.from(engine.state())
+        if (st == EngineState.IDLE) return
+        Log.d(TAG, "cambio de dispositivo USB: renegociando la salida")
+        val pos = if (st == EngineState.ERROR) lastPosMs else engine.positionMs()
+        reopenCurrent(resume = if (st == EngineState.ERROR) lastPlaying else st == EngineState.PLAYING, posMs = pos)
+    }
+
     private fun queueNext() {
         queue.getOrNull(index + 1)?.let { if (!fdLoad(it, true)) Log.w(TAG, "queueNext falló: ${it.title}") }
     }
@@ -136,6 +180,16 @@ class PlaybackController(private val context: Context) {
     private fun tick() {
         if (queue.isEmpty()) return
         val st = EngineState.from(engine.state())
+        if (st != EngineState.ERROR) { lastPosMs = engine.positionMs(); lastPlaying = st == EngineState.PLAYING; recoverTries = 0 }
+        else {   // p. ej. DAC desconectado: reintentar (máx. 3 veces) en la misma posición
+            val now = SystemClock.elapsedRealtime()
+            if (recoverTries < 3 && now - lastRecoverAt > 2000) {
+                recoverTries++; lastRecoverAt = now
+                Log.w(TAG, "motor en ERROR: reintento $recoverTries/3 en $lastPosMs ms")
+                reopenCurrent(resume = lastPlaying, posMs = lastPosMs)
+                return
+            }
+        }
         // Atenuado y de pronto empieza una llamada (se contestó mientras sonaba): pausar hasta que termine
         if (ducked && st == EngineState.PLAYING) {
             modePoll = (modePoll + 1) % 4            // tick de 250 ms -> comprobar 1 vez por segundo

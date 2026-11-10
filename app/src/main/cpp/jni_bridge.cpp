@@ -1,10 +1,19 @@
 #include <jni.h>
 #include <memory>
+#include <vector>
 #include "AudioEngine.h"
 #include "Log.h"
 
 static std::unique_ptr<AudioEngine> gEngine;
 #define FN(name) Java_com_hifiplayer_audio_NativeAudioEngine_##name
+
+static std::vector<int> toVec(JNIEnv* env, jintArray a) {
+    std::vector<int> v;
+    if (!a) return v;
+    v.resize(static_cast<size_t>(env->GetArrayLength(a)));
+    if (!v.empty()) env->GetIntArrayRegion(a, 0, static_cast<jint>(v.size()), v.data());
+    return v;
+}
 
 extern "C" {
 JNIEXPORT void JNICALL FN(nCreate)(JNIEnv*, jobject) { if (!gEngine) gEngine = std::make_unique<AudioEngine>(); }
@@ -21,6 +30,14 @@ JNIEXPORT jint JNICALL FN(nState)(JNIEnv*, jobject) { return gEngine ? gEngine->
 JNIEXPORT jint JNICALL FN(nTransitions)(JNIEnv*, jobject) { return gEngine ? gEngine->transitions() : 0; }
 JNIEXPORT void JNICALL FN(nSetBitPerfect)(JNIEnv*, jobject, jboolean on) { if (gEngine) gEngine->setBitPerfect(on); }
 JNIEXPORT void JNICALL FN(nSetVolume)(JNIEnv*, jobject, jfloat v) { if (gEngine) gEngine->setVolume(v); }
+
+JNIEXPORT void JNICALL FN(nSetOutputPlan)(JNIEnv* env, jobject, jint deviceId, jintArray rates, jintArray formats,
+                                          jint forcedRate, jint forcedFmt) {
+    if (gEngine) gEngine->setOutputPlan(deviceId, toVec(env, rates), toVec(env, formats), forcedRate, forcedFmt);
+}
+JNIEXPORT jstring JNICALL FN(nOutputInfo)(JNIEnv* env, jobject) {
+    return env->NewStringUTF(gEngine ? gEngine->outputInfo().c_str() : "");
+}
 
 JNIEXPORT jintArray JNICALL FN(nFormat)(JNIEnv* env, jobject) {
     StreamInfo i = gEngine ? gEngine->currentInfo() : StreamInfo{};
