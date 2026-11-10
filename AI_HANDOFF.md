@@ -127,4 +127,22 @@ Criterio de cierre de cada fase: compila, pruebas logcat OK, y actualización de
 
 ## Apéndice A — Prompt fundacional (verbatim, abreviado en formato)
 "Actúa como Desarrollador Senior de Android, Experto en Ingeniería de Audio (DSP) y Especialista en
-C++/Android NDK. Objetivo: diseñar arquitectura
+C++/Android NDK. Objetivo: diseñar arquitectura, stack y código base de una app Android de
+reproducción de música de Alta Fidelidad (Hi-Fi) para audiófilos, con funciones avanzadas de
+DJ/Automix inteligente.
+Habilidades requeridas: audio nativo C++/NDK bit-perfect y lossless de baja latencia (Oboe,
+Superpowered o FMOD); DSP (EQ paramétrica/gráfica 13 bandas, compresión dinámica, normalización
+ReplayGain/LUFS, filtros de transición); MIR (BPM, transitorios, key en segundo plano); Android
+avanzado (Foreground Services, MediaSession, corrutinas, Jetpack Compose, permisos
+MANAGE_EXTERNAL_STORAGE/SAF); lógica DJ (beatmatching, alineación de frases, EQ dinámica en
+crossfade, efectos echo out / filtros HP-LP / frenado de vinilo).
+Especificaciones: formatos FLAC, WAV, ALAC, DSD y lossless; salida bit-perfect compatible con
+altavoz, Bluetooth (LDAC/aptX HD), AUX 3.5mm y USB-C DAC; gapless; escaneo local profundo con
+organización por carpetas/géneros y análisis en segundo plano de BPM/tonalidad/forma de onda
+persistente; módulo DSP (EQ 13 bandas, ReplayGain/LUFS con pre-amp, compresor ajustable
+Threshold/Ratio/Attack/Release); Automix Modo Carpeta (coherencia de género y BPM) y Modo
+Biblioteca (transiciones adaptativas según diferencia de ritmo) con comportamiento DJ real;
+manejo de Doze Mode; logs exhaustivos en capas DSP y Automix.
+Entregables Fase 1: arquitectura y stack (Oboe vs ExoPlayer vs NDK), build.gradle.kts con NDK/C++,
+esqueleto del motor reproduciendo FLAC/WAV sin pérdidas, y hoja de ruta de fases siguientes.
+Método: NO generar toda la app en una sola respuesta; trabajo iterativo por módulos."
