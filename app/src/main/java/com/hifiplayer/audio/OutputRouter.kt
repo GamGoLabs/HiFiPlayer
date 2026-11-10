@@ -75,7 +75,7 @@ class OutputRouter(context: Context, private val onRouteChanged: () -> Unit) {
                 if (bitPerfect) "sin DAC USB conectado" else "bit-perfect desactivado")
         }
         val rates = dev.sampleRates
-        val formats = dev.encodings.mapNotNull { mapEncoding(it) }.distinct().toIntArray()
+        val formats = dev.encodings.asSequence().mapNotNull(::mapEncoding).distinct().toList().toIntArray()
         if (loggedDevice != dev.id) { loggedDevice = dev.id; logCaps(dev) }
 
         var forcedRate = 0

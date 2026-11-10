@@ -29,8 +29,7 @@
     "variantName": "debug",
     "isDebuggableEnabled": true,
     "validAbiList": [
-      "arm64-v8a",
-      "x86_64"
+      "arm64-v8a"
     ],
     "buildTargetSet": [],
     "implicitBuildTargetSet": [],
@@ -156,6 +155,7 @@
         "rootBuildGradleFolder": "C:\\dev\\HiFiPlayer",
         "sdkFolder": "C:\\Users\\ingsb\\AppData\\Local\\Android\\Sdk",
         "isBuildOnlyTargetAbiEnabled": true,
+        "ideBuildTargetAbi": "arm64-v8a",
         "isCmakeBuildCohabitationEnabled": false,
         "isPrefabEnabled": true
       },
