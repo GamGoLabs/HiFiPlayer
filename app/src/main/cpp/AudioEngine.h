@@ -2,6 +2,7 @@
 #include <oboe/Oboe.h>
 
 #include <atomic>
+#include <cstdarg>
 #include <deque>
 #include <map>
 #include <memory>
@@ -18,17 +19,17 @@
 class AudioEngine final : public oboe::AudioStreamDataCallback,
                           public oboe::AudioStreamErrorCallback {
 public:
-    enum State : int { Idle = 0, Ready, Playing, Paused, Ended, Error };
+    enum State : int { Idle = 0, Ready, Playing, Paused, Ended, Error, Suspended = 6 };
 
     AudioEngine();
     ~AudioEngine();
 
     bool load(int fd);                 // reemplaza la pista actual
     bool queueNext(int fd);            // siguiente pista para gapless
-    bool play();
-    void pause();
+    bool play();                       // desde Suspended: fuerza recuperacion inmediata
+    void pause();                      // desde Suspended: cancela recovery y queda en Paused (posicion conservada)
     void stop();
-    bool seekMs(int64_t ms);
+    bool seekMs(int64_t ms);           // permitido tambien en Suspended (redefine el punto de reanudacion)
 
     int64_t positionMs();
     int64_t durationMs();
@@ -39,9 +40,6 @@ public:
     void setVolume(float v) { mTargetGain.store(v < 0.f ? 0.f : (v > 1.f ? 1.f : v)); }
 
     // Plan de salida (lo calcula Kotlin a partir del AudioDeviceInfo del DAC):
-    //  deviceId: id numerico del AudioDeviceInfo (0 = ruteo por defecto)
-    //  rates/formats: capacidades declaradas por el DAC (vacio = desconocido); formats usa OutFmt (0=I16,1=I24,2=I32,3=Float)
-    //  forcedRate/forcedFmt: combinacion que Android 14+ acepto como mezclador BIT_PERFECT (0/-1 = ninguna)
     void setOutputPlan(int deviceId, const std::vector<int>& rates, const std::vector<int>& formats,
                        int forcedRate, int forcedFmt);
 
@@ -68,6 +66,14 @@ private:
     void resetTimelineLocked(uint64_t startFrame);
     void syncBoundariesLocked();       // requiere mTimeMutex
     bool compatible(const StreamInfo& a, const StreamInfo& b) const;
+
+    // hot-plug / auto-recuperacion (requieren mMutex salvo las atomicas)
+    void handleDisconnectLocked();
+    bool recoverNowLocked();
+    void startRecoveryLocked();
+    void stopRecoveryLocked();
+    void recoveryLoop();
+    void appendTel(const char* fmt, ...);
 
     std::mutex mMutex;                 // operaciones de control
     std::mutex mSrcMutex;              // mNext
@@ -98,6 +104,14 @@ private:
     int mForcedRate = 0, mForcedFmt = -1;
     std::map<std::string, NegEntry> mNegCache;
     std::string mTelemetry;
+
+    // hot-plug
+    std::thread mRecoverThread;
+    std::atomic<bool> mRecoverRun{false};
+    bool mSuspended = false;           // mMutex
+    bool mWasPlaying = false;          // mMutex
+    uint64_t mResumeFrame = 0;         // mMutex, frames de ORIGEN de la pista actual
+    int mRecoverAttempts = 0;          // solo hilo recovery
 
     // timeline (mTimeMutex)
     StreamInfo mCurInfo;

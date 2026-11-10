@@ -168,9 +168,13 @@ class PlaybackController(private val context: Context) {
         if (index !in queue.indices) return
         val st = EngineState.from(engine.state())
         if (st == EngineState.IDLE) return
-        Log.d(TAG, "cambio de dispositivo USB: renegociando la salida")
-        val pos = if (st == EngineState.ERROR) lastPosMs else engine.positionMs()
-        reopenCurrent(resume = if (st == EngineState.ERROR) lastPlaying else st == EngineState.PLAYING, posMs = pos)
+
+        // ═══ HOT-PLUG: refrescar plan YA (el recovery nativo lo usa en <800ms) ═══
+        applyPlan()
+
+        Log.d(TAG, "cambio de dispositivo USB: plan refrescado y renegociando la salida")
+        val pos = if (st == EngineState.ERROR || st == EngineState.SUSPENDED) lastPosMs else engine.positionMs()
+        reopenCurrent(resume = if (st == EngineState.ERROR || st == EngineState.SUSPENDED) lastPlaying else st == EngineState.PLAYING, posMs = pos)
     }
 
     private fun queueNext() {
@@ -180,8 +184,14 @@ class PlaybackController(private val context: Context) {
     private fun tick() {
         if (queue.isEmpty()) return
         val st = EngineState.from(engine.state())
-        if (st != EngineState.ERROR) { lastPosMs = engine.positionMs(); lastPlaying = st == EngineState.PLAYING; recoverTries = 0 }
-        else {   // p. ej. DAC desconectado: reintentar (máx. 3 veces) en la misma posición
+
+        // ═══ HOT-PLUG: reconocer estado Suspended (6) del motor ═══
+        if (st != EngineState.ERROR && st != EngineState.SUSPENDED) {
+            lastPosMs = engine.positionMs()
+            lastPlaying = st == EngineState.PLAYING
+            recoverTries = 0
+        } else if (st == EngineState.ERROR) {
+            // p. ej. DAC desconectado (motor antiguo sin Suspended): reintentar (máx. 3 veces) en la misma posición
             val now = SystemClock.elapsedRealtime()
             if (recoverTries < 3 && now - lastRecoverAt > 2000) {
                 recoverTries++; lastRecoverAt = now
@@ -190,6 +200,9 @@ class PlaybackController(private val context: Context) {
                 return
             }
         }
+        // Estado Suspended: el motor nativo maneja la recuperación internamente (C++ recovery loop).
+        // Kotlin solo muestra el estado y espera que el motor recupere o timeout.
+
         // Atenuado y de pronto empieza una llamada (se contestó mientras sonaba): pausar hasta que termine
         if (ducked && st == EngineState.PLAYING) {
             modePoll = (modePoll + 1) % 4            // tick de 250 ms -> comprobar 1 vez por segundo
@@ -198,6 +211,7 @@ class PlaybackController(private val context: Context) {
                 engine.pause(); resumeOnFocus = true
             }
         } else modePoll = 0
+
         val tr = engine.transitions()
         if (tr > lastTransitions) {
             index += tr - lastTransitions
@@ -213,6 +227,14 @@ class PlaybackController(private val context: Context) {
     }
 
     private fun publish() {
+        // ═══ HOT-PLUG: derivar avisos desde telemetría ═══
+        val telemetry = engine.outputInfo()
+        val bpWarning = telemetry.contains("WARNING: exclusive mode unavailable")
+        val recoveryNotice = when {
+            telemetry.contains("recover=timeout") -> "DAC no reconectado a tiempo: en pausa (posición conservada)"
+            else -> null
+        }
+
         _ui.value = PlayerUiState(
             title = queue.getOrNull(index)?.title.orEmpty(),
             state = EngineState.from(engine.state()),
@@ -220,6 +242,8 @@ class PlaybackController(private val context: Context) {
             durationMs = engine.durationMs(),
             index = index, queueSize = queue.size,
             streamInfo = streamInfo, bitPerfectInfo = bpInfo, bitPerfectEnabled = bpEnabled,
+            bitPerfectWarning = bpWarning,
+            recoveryNotice = recoveryNotice,
         )
     }
 

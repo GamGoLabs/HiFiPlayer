@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -82,6 +83,37 @@ fun PlayerScreen(vm: PlayerViewModel, onPick: () -> Unit, onBattery: () -> Unit)
         Spacer(Modifier.height(8.dp))
         Text(ui.title.ifEmpty { "—" }, style = MaterialTheme.typography.titleMedium)
         Text("Pista ${ui.index + 1}/${ui.queueSize}  ·  ${ui.state}")
+
+        // ═══════════════════════════════════════════════════════════════
+        // PATCH HOT-PLUG: banners de estado (Suspended + warnings)
+        // ═══════════════════════════════════════════════════════════════
+        // Banner de suspensión (DAC desconectado esperando reconexión)
+        if (ui.state == EngineState.SUSPENDED) {
+            Text(
+                text = "⏳ Esperando DAC… reanudación automática al reconectar",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.tertiary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        // Aviso de bit-perfect denegado (modo compartido forzado)
+        if (ui.bitPerfectWarning) {
+            Text(
+                text = "⚠ Modo compartido: sin bit-perfect con este DAC/ajuste",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        // Aviso de recovery timeout (DAC no reconectó a tiempo)
+        ui.recoveryNotice?.let { notice ->
+            Text(
+                text = notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        // ═══════════════════════════════════════════════════════════════
 
         Slider(
             value = dragging ?: progress,

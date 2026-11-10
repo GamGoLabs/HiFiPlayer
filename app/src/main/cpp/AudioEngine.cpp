@@ -6,6 +6,7 @@
 #include <oboe/OboeExtensions.h>
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -21,12 +22,26 @@ static oboe::AudioFormat toOboe(OutFmt f) {
 }
 
 AudioEngine::AudioEngine() { LOGD("AudioEngine creado"); }
-AudioEngine::~AudioEngine() { std::lock_guard<std::mutex> g(mMutex); stopLocked(); }
+AudioEngine::~AudioEngine() {
+    std::lock_guard<std::mutex> g(mMutex);
+    stopRecoveryLocked();
+    stopLocked();
+}
 
 bool AudioEngine::compatible(const StreamInfo& a, const StreamInfo& b) const {
     if (a.sampleRate != b.sampleRate || a.channels != b.channels) return false;
+    // con bit-perfect activo, el formato de salida abierto debe seguir siendo sin perdida para la pista siguiente
     if (mBitPerfect.load() && mStream && !formatLossless(mOutFmt, static_cast<int>(b.bitsPerSample))) return false;
     return true;
+}
+
+void AudioEngine::appendTel(const char* fmt, ...) {
+    char buf[192];
+    va_list ap; va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    std::lock_guard<std::mutex> t(mTelMutex);
+    mTelemetry += buf;
 }
 
 // ---------------------------------------------------------------- control
@@ -37,7 +52,7 @@ void AudioEngine::setOutputPlan(int deviceId, const std::vector<int>& rates, con
     OutCaps caps;
     caps.rates = rates;
     for (int f : formats) if (f >= 0 && f <= 3) caps.formats.push_back(static_cast<OutFmt>(f));
-    if (deviceId != mDeviceId || !(caps == mCaps)) mNegCache.clear();
+    if (deviceId != mDeviceId || !(caps == mCaps)) mNegCache.clear();    // otro DAC: renegociar
     mDeviceId = deviceId;
     mCaps = caps;
     mForcedRate = forcedRate;
@@ -48,6 +63,7 @@ void AudioEngine::setOutputPlan(int deviceId, const std::vector<int>& rates, con
 
 bool AudioEngine::load(int fd) {
     std::lock_guard<std::mutex> g(mMutex);
+    stopRecoveryLocked();
     stopLocked();
     std::string err;
     auto src = PcmSource::openFd(fd, err);
@@ -64,6 +80,7 @@ bool AudioEngine::load(int fd) {
         mBoundaries.clear();
         mFramesRendered = 0; mOriginRendered = 0; mStartOffset = 0; mStartFrame = 0;
     }
+    mSuspended = false;
     mState = Ready;
     LOGD("load OK (bitPerfect=%d)", static_cast<int>(mBitPerfect.load()));
     return true;
@@ -83,7 +100,7 @@ bool AudioEngine::tryOpen(int rate, OutFmt fmt, bool exclusive, int deviceId,
                           std::shared_ptr<oboe::AudioStream>& out, oboe::Result& r) {
     oboe::AudioStreamBuilder b;
     b.setDirection(oboe::Direction::Output)
-            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)       // habilita MMAP/exclusivo si el HAL lo permite
             ->setSharingMode(exclusive ? oboe::SharingMode::Exclusive : oboe::SharingMode::Shared)
             ->setUsage(oboe::Usage::Media)
             ->setContentType(oboe::ContentType::Music)
@@ -95,12 +112,15 @@ bool AudioEngine::tryOpen(int rate, OutFmt fmt, bool exclusive, int deviceId,
             ->setChannelConversionAllowed(false)
             ->setDataCallback(this)
             ->setErrorCallback(this);
-    if (deviceId > 0) b.setDeviceId(deviceId);
+    if (deviceId > 0) b.setDeviceId(deviceId);                         // ruteo explicito al DAC
     r = b.openStream(out);
     if (r != oboe::Result::OK) { out.reset(); return false; }
     return true;
 }
 
+// Negociacion en cascada. AAudio concede EXCLUSIVO solo si el HAL/DAC lo permite para esa combinacion
+// frecuencia+formato; si no, devuelve un stream COMPARTIDO sin avisar. Por eso se comprueba el modo REAL
+// concedido y se prueba la siguiente combinacion. El resultado se cachea por (dispositivo, frecuencia, profundidad).
 bool AudioEngine::openStreamLocked() {
     if (mStream) return true;
     const StreamInfo in = currentInfo();
@@ -155,7 +175,7 @@ bool AudioEngine::openStreamLocked() {
         std::vector<Candidate> base;
         if (skipExcl) addTrace("cache: este DAC no concede exclusivo con ninguna combinacion probada");
         else base = buildPlan(srcRate, static_cast<int>(in.bitsPerSample), mCaps);
-        if (it != mNegCache.end() && !it->second.noExclusive) {
+        if (it != mNegCache.end() && !it->second.noExclusive) {          // probar primero lo que funciono antes
             for (size_t i = 0; i < base.size(); ++i)
                 if (base[i].rate == it->second.rate && static_cast<int>(base[i].fmt) == it->second.fmt) {
                     std::swap(base[0], base[i]);
@@ -172,24 +192,18 @@ bool AudioEngine::openStreamLocked() {
         else if (!got && !skipExcl && !base.empty()) mNegCache[key] = {0, 0, true};
     }
 
-    if (!got) {
+    if (!got) {   // ultimo recurso: compartido a la frecuencia de la pista (comportamiento anterior)
         OutFmt nf = bp ? (in.bitsPerSample <= 16 ? OutFmt::I16 : OutFmt::I32) : OutFmt::Float;
         std::shared_ptr<oboe::AudioStream> s;
         oboe::Result r = oboe::Result::OK;
         bool ok = tryOpen(srcRate, nf, false, mDeviceId, s, r);
-        if (!ok && mDeviceId > 0) {
-            addTrace("compartido con dispositivo explicito fallo: sin deviceId");
-            ok = tryOpen(srcRate, nf, false, 0, s, r);
-        }
+        if (!ok && mDeviceId > 0) { addTrace("compartido con dispositivo explicito fallo: sin deviceId"); ok = tryOpen(srcRate, nf, false, 0, s, r); }
         if (!ok && nf != OutFmt::Float) {
             LOGW("Formato nativo %s rechazado (%s). Fallback a Float (NO bit-perfect)", fmtName(nf), oboe::convertToText(r));
             nf = OutFmt::Float;
             ok = tryOpen(srcRate, nf, false, 0, s, r);
         }
-        if (!ok) {
-            LOGE("openStream fallo: %s", oboe::convertToText(r));
-            return false;
-        }
+        if (!ok) { LOGE("openStream fallo: %s", oboe::convertToText(r)); return false; }
         got = s;
         gotFmt = nf;
         addTrace("fallback: compartido");
@@ -200,7 +214,7 @@ bool AudioEngine::openStreamLocked() {
     mFrameBytes = mChannels * static_cast<uint32_t>(sc::bytesPerSample(gotFmt));
     mStreamRate = static_cast<uint32_t>(mStream->getSampleRate());
 
-    // MEJORA: Verificación de buffer size real
+    // Verificación de buffer size real
     const int burst = mStream->getFramesPerBurst();
     const int requestedBuffer = burst * 8;
     const auto bufferResult = mStream->setBufferSizeInFrames(requestedBuffer);
@@ -215,7 +229,7 @@ bool AudioEngine::openStreamLocked() {
     LOGD("Buffer configurado: %d frames (%.1f ms), burst=%d frames", actualBuffer,
          actualBuffer * 1000.0 / mStreamRate.load(), burst);
 
-    mRing = std::make_unique<RingBuffer>(static_cast<size_t>(mStreamRate.load()) * mFrameBytes);
+    mRing = std::make_unique<RingBuffer>(static_cast<size_t>(mStreamRate.load()) * mFrameBytes);   // ~1 s
     mGainStep = 1.0f / (0.08f * static_cast<float>(mStreamRate.load()));
     mCurGain = mTargetGain.load();
 
@@ -229,7 +243,6 @@ bool AudioEngine::openStreamLocked() {
                                             : ((!excl && !gotForced) ? "exclusivo rechazado por el sistema" : ""));
     const char* mode = gotForced ? "MIXER_BP" : (excl ? "EXCL" : "SHARED");
 
-    // MEJORA: Telemetría con warnings claros
     char tel[1200];
     std::snprintf(tel, sizeof(tel),
                   "mode=%s;excl=%d;mmap=%d;api=%s;dev=%d;rate=%u;fmt=%s;src=%u;bits=%u;resampled=%d;attempts=%d;why=%s;buffer=%d;neg=%s",
@@ -264,8 +277,20 @@ bool AudioEngine::play() {
     std::lock_guard<std::mutex> g(mMutex);
     int s = mState.load();
     if (s == Playing) return true;
+    if (s == Suspended) {                       // recuperacion inmediata pedida por el usuario
+        stopRecoveryLocked();
+        if (recoverNowLocked()) return true;
+        mState = Error;
+        return false;
+    }
     if (s == Paused) {
-        if (mStream) mStream->requestStart();
+        stopRecoveryLocked();
+        if (mStream) { mStream->requestStart(); mState = Playing; return true; }
+        if (mSuspended) {                       // pausa tras desconexion: reabre desde la posicion guardada
+            if (recoverNowLocked()) return true;
+            mState = Error;
+            return false;
+        }
         mState = Playing;
         return true;
     }
@@ -284,16 +309,26 @@ bool AudioEngine::play() {
 
 void AudioEngine::pause() {
     std::lock_guard<std::mutex> g(mMutex);
+    stopRecoveryLocked();
+    if (mState == Suspended) {                  // cancelar recovery: queda en pausa con posicion conservada
+        mSuspended = false;
+        mState = Paused;
+        appendTel(";recover=cancel");
+        LOGD("Recovery cancelado por pausa; posicion conservada");
+        return;
+    }
     if (mState == Playing && mStream) { mStream->requestPause(); mState = Paused; }
 }
 
 void AudioEngine::stop() {
     std::lock_guard<std::mutex> g(mMutex);
     if (!mSource) return;
+    stopRecoveryLocked();
     stopLocked();
     { std::lock_guard<std::mutex> s(mSrcMutex); mNext.reset(); }
     mSource->seek(0);
     mStartFrame = 0;
+    mSuspended = false;
     {
         std::lock_guard<std::mutex> t(mTimeMutex);
         mStartOffset = 0; mOriginRendered = 0; mBoundaries.clear();
@@ -308,12 +343,25 @@ bool AudioEngine::seekMs(int64_t ms) {
     int s = mState.load();
     if (s == Error || s == Idle) return false;
 
+    if (s == Suspended) {                       // redefine el punto de reanudacion
+        stopRecoveryLocked();
+        StreamInfo info;
+        { std::lock_guard<std::mutex> t(mTimeMutex); info = mCurInfo; }
+        uint64_t target = static_cast<uint64_t>(ms < 0 ? 0 : ms) * info.sampleRate / 1000;
+        if (info.totalFrames && target >= info.totalFrames) target = info.totalFrames - 1;
+        if (!mSource->seek(target)) { LOGE("seek fallo"); return false; }
+        mResumeFrame = target; mStartFrame = target;
+        { std::lock_guard<std::mutex> t(mTimeMutex); mStartOffset = target; }
+        LOGD("seek en suspension -> %lld ms", static_cast<long long>(ms));
+        return true;
+    }
+
     bool resume = (s == Playing);
     bool streaming = (s == Playing || s == Paused || s == Ended);
     if (streaming) { stopDecoderLocked(); if (mStream) mStream->stop(); }
 
     StreamInfo info;
-    {
+    {   // Limitacion conocida: si el decoder ya paso a la pista siguiente, el seek aplica a esa
         std::lock_guard<std::mutex> t(mTimeMutex);
         if (!mBoundaries.empty()) {
             LOGW("Seek con transicion gapless pendiente: se aplica a la pista siguiente");
@@ -362,6 +410,88 @@ void AudioEngine::prefill() {
         std::this_thread::sleep_for(5ms);
 }
 
+// ---------------------------------------------------------------- hot-plug / auto-recuperacion
+
+void AudioEngine::handleDisconnectLocked() {
+    stopDecoderLocked();
+    stopRecoveryLocked();
+    {
+        std::lock_guard<std::mutex> t(mTimeMutex);
+        const uint64_t outRate = mStreamRate.load() ? mStreamRate.load() : mCurInfo.sampleRate;
+        const uint64_t rendered = mFramesRendered.load() > mOriginRendered ? mFramesRendered.load() - mOriginRendered : 0;
+        const uint64_t srcFrames = outRate ? rendered * mCurInfo.sampleRate / outRate : 0;   // compensa resampler
+        mResumeFrame = mStartOffset + srcFrames;
+        if (mCurInfo.totalFrames && mResumeFrame >= mCurInfo.totalFrames) mResumeFrame = mCurInfo.totalFrames - 1;
+        mStartOffset = mResumeFrame;          // positionMs() queda estable en el punto de reanudacion
+        mOriginRendered = mFramesRendered.load();
+        mBoundaries.clear();                  // referian a frames de SALIDA del stream muerto
+    }
+    mWasPlaying = (mState == Playing);
+    mStream.reset();                          // Oboe ya cerro el stream tras el error
+    mRing.reset();
+    mSuspended = true;
+    mState = Suspended;
+    appendTel(";suspend=1;resumeFrame=%llu", static_cast<unsigned long long>(mResumeFrame));
+    LOGW("SUSPEND: DAC desconectado; reanudacion preparada en frame %llu (%s)",
+         static_cast<unsigned long long>(mResumeFrame), mWasPlaying ? "reproducia" : "en pausa");
+}
+
+bool AudioEngine::recoverNowLocked() {
+    if (mState != Suspended) return true;
+    if (!mSource) return false;
+    if (!mSource->seek(mResumeFrame)) { LOGE("recover: seek a frame %llu fallo", static_cast<unsigned long long>(mResumeFrame)); return false; }
+    mStartFrame = mResumeFrame;
+    if (!openStreamLocked()) return false;    // usa el plan vigente (Kotlin pudo actualizarlo al reconectar)
+    resetTimelineLocked(mResumeFrame);
+    startDecoderLocked();
+    prefill();
+    auto r = mStream->requestStart();
+    if (r != oboe::Result::OK) { LOGE("recover: requestStart: %s", oboe::convertToText(r)); stopLocked(); return false; }
+    mSuspended = false;
+    mState = Playing;
+    return true;
+}
+
+void AudioEngine::startRecoveryLocked() {
+    stopRecoveryLocked();
+    mRecoverRun = true;
+    mRecoverAttempts = 0;
+    mRecoverThread = std::thread(&AudioEngine::recoveryLoop, this);
+}
+
+void AudioEngine::stopRecoveryLocked() {
+    mRecoverRun = false;
+    if (mRecoverThread.joinable()) mRecoverThread.join();
+}
+
+// Hilo de recuperacion: NUNCA bloquea en mMutex (try_lock), para que stopRecoveryLocked()
+// (que hace join bajo mMutex) no pueda deadlockear contra su propio hilo.
+void AudioEngine::recoveryLoop() {
+    constexpr auto kTimeout = 20s;
+    const auto t0 = std::chrono::steady_clock::now();
+    while (mRecoverRun.load()) {
+        std::this_thread::sleep_for(800ms);
+        if (!mRecoverRun.load()) break;
+        ++mRecoverAttempts;
+        if (mMutex.try_lock()) {
+            if (mState != Suspended) { mMutex.unlock(); break; }
+            const bool ok = recoverNowLocked();
+            mMutex.unlock();
+            if (ok) {
+                appendTel(";recover=ok;attempts=%d", mRecoverAttempts);
+                LOGD("RECOVER OK: stream reabierto y reanudado tras %d intento(s)", mRecoverAttempts);
+                break;
+            }
+            if (std::chrono::steady_clock::now() - t0 > kTimeout) {
+                appendTel(";recover=timeout;attempts=%d", mRecoverAttempts);
+                LOGW("RECOVER timeout tras %d intento(s): queda en PAUSA con posicion conservada", mRecoverAttempts);
+                if (mMutex.try_lock()) { mSuspended = false; mState = Paused; mMutex.unlock(); }
+                break;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- decoder thread
 
 void AudioEngine::decoderLoop() {
@@ -383,10 +513,10 @@ void AudioEngine::decoderLoop() {
     std::vector<uint8_t> out(maxOut * frameBytes);
 
     uint64_t lastUnderruns = 0;
-    uint64_t srcPos = mStartFrame;
+    uint64_t srcPos = mStartFrame;   // frame alcanzado dentro del archivo actual (origen)
     LOGD("decoder: inicio (desde frame %llu)", static_cast<unsigned long long>(srcPos));
 
-    auto writeOut = [&](size_t frames) {
+    auto writeOut = [&](size_t frames) {   // espera hueco y escribe
         const size_t bytes = frames * frameBytes;
         while (mRun.load() && mRing->writable() < bytes) std::this_thread::sleep_for(5ms);
         if (mRun.load()) { mRing->write(out.data(), bytes); mFramesWritten += frames; }
@@ -419,11 +549,11 @@ void AudioEngine::decoderLoop() {
                 mSource = std::move(next);
                 srcPos = 0;
                 std::lock_guard<std::mutex> t(mTimeMutex);
-                mBoundaries.push_back({mFramesWritten, mSource->info()});
+                mBoundaries.push_back({mFramesWritten, mSource->info()});   // el resampler sigue: sin hueco
                 LOGD("decoder: gapless en frame de salida %llu", static_cast<unsigned long long>(mFramesWritten));
                 continue;
             }
-            if (rs) {
+            if (rs) {   // fin real de la cola: vaciar la cola del filtro con silencio
                 std::vector<float> zeros(static_cast<size_t>(rs->latencyFrames()) * ch, 0.0f);
                 size_t frames = rs->process(zeros.data(), rs->latencyFrames(), fout.data(), maxOut);
                 if (frames) { sc::fromFloat(fout.data(), frames * ch, fmt, out.data()); writeOut(frames); }
@@ -469,7 +599,16 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream*, void* dat
 
 void AudioEngine::onErrorAfterClose(oboe::AudioStream*, oboe::Result r) {
     LOGE("Stream cerrado por error: %s (DAC desconectado?)", oboe::convertToText(r));
-    mState = Error;
+    if (r == oboe::Result::ErrorDisconnected) {
+        std::lock_guard<std::mutex> g(mMutex);
+        if (mState == Suspended) return;                 // ya gestionado
+        if (mState == Playing || mState == Paused) {
+            handleDisconnectLocked();
+            if (mWasPlaying) startRecoveryLocked();      // en pausa no hay prisa: play() recuperara
+            return;
+        }
+    }
+    mState = Error;   // Kotlin decide si reintenta
 }
 
 // ---------------------------------------------------------------- consultas
@@ -491,8 +630,8 @@ int64_t AudioEngine::positionMs() {
     syncBoundariesLocked();
     if (!mCurInfo.sampleRate) return 0;
     const uint64_t outRate = mStreamRate.load() ? mStreamRate.load() : mCurInfo.sampleRate;
-    const int64_t startMs = static_cast<int64_t>(mStartOffset * 1000 / mCurInfo.sampleRate);
-    const int64_t playedMs = static_cast<int64_t>((mFramesRendered.load() - mOriginRendered) * 1000 / outRate);
+    const int64_t startMs = static_cast<int64_t>(mStartOffset * 1000 / mCurInfo.sampleRate);          // origen
+    const int64_t playedMs = static_cast<int64_t>((mFramesRendered.load() - mOriginRendered) * 1000 / outRate);   // salida
     return startMs + playedMs;
 }
 

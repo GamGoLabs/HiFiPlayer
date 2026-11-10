@@ -5,7 +5,7 @@ import android.net.Uri
 data class Track(val uri: Uri, val title: String)
 
 enum class EngineState {
-    IDLE, READY, PLAYING, PAUSED, ENDED, ERROR;
+    IDLE, READY, PLAYING, PAUSED, ENDED, ERROR, SUSPENDED;
 
     companion object {
         fun from(i: Int) = entries.getOrElse(i) { IDLE }
@@ -22,4 +22,7 @@ data class PlayerUiState(
     val streamInfo: String = "",
     val bitPerfectInfo: String = "",
     val bitPerfectEnabled: Boolean = true,
+    // ═══ NUEVOS CAMPOS PARA HOT-PLUG ═══
+    val bitPerfectWarning: Boolean = false,    // true si telemetría contiene "WARNING: exclusive mode unavailable"
+    val recoveryNotice: String? = null,        // "DAC no reconectado..." si recover=timeout, null si no
 )

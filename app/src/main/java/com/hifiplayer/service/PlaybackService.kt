@@ -135,6 +135,7 @@ class PlaybackService : Service() {
         val st = when (s.state) {
             EngineState.PLAYING -> PlaybackState.STATE_PLAYING
             EngineState.PAUSED, EngineState.READY -> PlaybackState.STATE_PAUSED
+            EngineState.SUSPENDED -> PlaybackState.STATE_BUFFERING   // ═══ HOT-PLUG: esperando DAC ═══
             EngineState.ERROR -> PlaybackState.STATE_ERROR
             else -> PlaybackState.STATE_STOPPED
         }
@@ -161,16 +162,20 @@ class PlaybackService : Service() {
 
     private fun buildNotification(s: PlayerUiState): Notification {
         val playing = s.state == EngineState.PLAYING
+        val suspended = s.state == EngineState.SUSPENDED   // ═══ HOT-PLUG ═══
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(s.title.ifEmpty { "HiFi Player" })
-            .setContentText(s.streamInfo)
+            .setContentText(when {
+                suspended -> "Esperando DAC… reanudación automática"
+                else -> s.streamInfo
+            })
             .setContentIntent(openAppIntent())
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setCategory(Notification.CATEGORY_TRANSPORT)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .setOngoing(playing)
+            .setOngoing(playing || suspended)   // ═══ HOT-PLUG: ongoing también en Suspended ═══
             .addAction(action(android.R.drawable.ic_media_previous, "Anterior", ACTION_PREV))
             .addAction(action(if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
                 "Play/Pausa", ACTION_TOGGLE))
@@ -198,7 +203,7 @@ class PlaybackService : Service() {
         const val ACTION_NEXT = "com.hifiplayer.NEXT"
         const val ACTION_PREV = "com.hifiplayer.PREV"
         private const val ACTIONS = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-            PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
-            PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
+                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
     }
 }
