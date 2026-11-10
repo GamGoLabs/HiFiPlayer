@@ -24,17 +24,12 @@ import com.hifiplayer.ui.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 
-/**
- * Foreground service: mantiene el proceso vivo (Doze), expone MediaSession y notificación multimedia.
- * Todos los puntos de entrada (callbacks de sesión y acciones de notificación) dejan traza en "HiFi.Service".
- */
 class PlaybackService : Service() {
     private lateinit var session: MediaSession
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wakeLock: PowerManager.WakeLock? = null
-    private val ctrl get() = (application as HiFiApp).controller   // ojo: dentro de MediaSession "controller" es otra cosa
+    private val ctrl get() = (application as HiFiApp).controller
 
-    // Ultimo estado publicado a la sesion (para no inundar al sistema ni perder el progreso)
     private var pubState: EngineState? = null
     private var pubIndex = -1
     private var pubDuration = -1L
@@ -42,7 +37,6 @@ class PlaybackService : Service() {
     private var pubAt = 0L
     private var lastNotifKey = ""
 
-    // Auriculares/BT desconectados: pausar para que no suene de golpe por el altavoz
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             Log.d(TAG, "ACTION_AUDIO_BECOMING_NOISY -> pausa")
@@ -56,7 +50,7 @@ class PlaybackService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Reproducción", NotificationManager.IMPORTANCE_LOW).apply {
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC   // controles visibles con el movil bloqueado
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setShowBadge(false)
             })
 
@@ -85,7 +79,7 @@ class PlaybackService : Service() {
                 updateWakeLock(s)
                 publishToSession(s)
                 val key = "${s.title}|${s.state}"
-                if (key != lastNotifKey) {   // la notificacion solo cambia con titulo/estado
+                if (key != lastNotifKey) {
                     lastNotifKey = key
                     nm.notify(NOTIF_ID, buildNotification(s))
                 }
@@ -107,15 +101,10 @@ class PlaybackService : Service() {
     private fun updateWakeLock(s: PlayerUiState) {
         val wl = wakeLock ?: return
         if (s.state == EngineState.PLAYING) {
-            if (!wl.isHeld) { wl.acquire(30 * 60 * 1000L); Log.d(TAG, "wakelock ON") }   // se renueva solo mientras suene
+            if (!wl.isHeld) { wl.acquire(30 * 60 * 1000L); Log.d(TAG, "wakelock ON") }
         } else if (wl.isHeld) { wl.release(); Log.d(TAG, "wakelock OFF") }
     }
 
-    /**
-     * Publica metadatos (titulo + DURACION: sin ella la barra del reproductor flotante no avanza)
-     * y estado. Solo vuelve a publicar si cambia estado/pista/duracion o si la posicion salta (seek);
-     * entre tanto el sistema extrapola el progreso con velocidad 1.0.
-     */
     private fun publishToSession(s: PlayerUiState) {
         val now = SystemClock.elapsedRealtime()
         val predicted = if (pubState == EngineState.PLAYING) pubPos + (now - pubAt) else pubPos
@@ -135,7 +124,7 @@ class PlaybackService : Service() {
         val st = when (s.state) {
             EngineState.PLAYING -> PlaybackState.STATE_PLAYING
             EngineState.PAUSED, EngineState.READY -> PlaybackState.STATE_PAUSED
-            EngineState.SUSPENDED -> PlaybackState.STATE_BUFFERING   // ═══ HOT-PLUG: esperando DAC ═══
+            EngineState.SUSPENDED -> PlaybackState.STATE_BUFFERING   // ═══ HOT-PLUG ═══
             EngineState.ERROR -> PlaybackState.STATE_ERROR
             else -> PlaybackState.STATE_STOPPED
         }

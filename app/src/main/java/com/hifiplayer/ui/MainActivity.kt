@@ -85,9 +85,8 @@ fun PlayerScreen(vm: PlayerViewModel, onPick: () -> Unit, onBattery: () -> Unit)
         Text("Pista ${ui.index + 1}/${ui.queueSize}  ·  ${ui.state}")
 
         // ═══════════════════════════════════════════════════════════════
-        // PATCH HOT-PLUG: banners de estado (Suspended + warnings)
+        // PATCH HOT-PLUG: banners de estado
         // ═══════════════════════════════════════════════════════════════
-        // Banner de suspensión (DAC desconectado esperando reconexión)
         if (ui.state == EngineState.SUSPENDED) {
             Text(
                 text = "⏳ Esperando DAC… reanudación automática al reconectar",
@@ -97,7 +96,6 @@ fun PlayerScreen(vm: PlayerViewModel, onPick: () -> Unit, onBattery: () -> Unit)
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        // Aviso de bit-perfect denegado (modo compartido forzado)
         if (ui.bitPerfectWarning) {
             Text(
                 text = "⚠ Modo compartido: sin bit-perfect con este DAC/ajuste",
@@ -105,7 +103,6 @@ fun PlayerScreen(vm: PlayerViewModel, onPick: () -> Unit, onBattery: () -> Unit)
                 color = MaterialTheme.colorScheme.error
             )
         }
-        // Aviso de recovery timeout (DAC no reconectó a tiempo)
         ui.recoveryNotice?.let { notice ->
             Text(
                 text = notice,

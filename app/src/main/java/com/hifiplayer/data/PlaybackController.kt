@@ -15,10 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
 
-/**
- * Orquesta cola + motor nativo. Toda la lógica corre en UN hilo (executor) => sin condiciones de carrera.
- * Aquí se enchufará el AutomixPlanner (Fase 5): decide qué pista encolar con queueNext().
- */
 class PlaybackController(private val context: Context) {
     private val engine = NativeAudioEngine
     private val dispatcher = Executors.newSingleThreadExecutor { Thread(it, "hifi-controller") }.asCoroutineDispatcher()
@@ -51,7 +47,7 @@ class PlaybackController(private val context: Context) {
                 Log.d(TAG, "foco perdido (permanente=$permanent, sonaba=$wasPlaying)")
                 if (wasPlaying) engine.pause()
                 resumeOnFocus = wasPlaying && !permanent
-                if (permanent) restoreVolume()   // si luego se reanuda a mano, que suene a volumen pleno
+                if (permanent) restoreVolume()
                 publish()
             }
         }
@@ -75,7 +71,6 @@ class PlaybackController(private val context: Context) {
         if (ducked) { ducked = false; engine.setVolume(1f); Log.d(TAG, "volumen restaurado al 100%") }
     }
 
-    /** Pide foco y arranca/reanuda. Sin foco (p. ej. durante una llamada) no suena. */
     private fun startPlayback(): Boolean {
         if (!focus.request()) { Log.w(TAG, "foco de audio denegado: no se reproduce"); return false }
         resumeOnFocus = false
@@ -87,7 +82,6 @@ class PlaybackController(private val context: Context) {
         scope.launch { while (isActive) { tick(); delay(250) } }
     }
 
-    // ---- API pública
     fun setQueue(tracks: List<Track>) = scope.launch { queue = tracks; playIndex(0) }
     fun play() = scope.launch { Log.d(TAG, "cmd play"); startPlayback(); publish() }
     fun pause() = scope.launch { Log.d(TAG, "cmd pause"); resumeOnFocus = false; engine.pause(); publish() }
@@ -112,7 +106,6 @@ class PlaybackController(private val context: Context) {
         publish()
     }
 
-    // ---- interno
     private fun fdLoad(track: Track, queueOnly: Boolean): Boolean =
         context.contentResolver.openFileDescriptor(track.uri, "r")?.use { pfd ->
             if (queueOnly) engine.queueNext(pfd.fd) else engine.load(pfd.fd)
@@ -137,9 +130,8 @@ class PlaybackController(private val context: Context) {
         engine.stop(); publish()
     }
 
-    /** Lee las capacidades del DAC y se las pasa al motor para que negocie frecuencia/formato (ver OutputRouter). */
     private fun applyPlan() {
-        val f = engine.format()                       // [frecuencia, canales, bits] de la pista cargada
+        val f = engine.format()
         val p = router.plan(f[0], f[1], f[2], bpEnabled)
         lastPlan = p
         engine.setOutputPlan(p.deviceId, p.rates, p.formats, p.forcedRate, p.forcedFmt)
@@ -150,7 +142,6 @@ class PlaybackController(private val context: Context) {
         bpInfo = OutputTelemetry.line(engine.outputInfo(), lastPlan?.deviceName, lastPlan?.mixerNote.orEmpty())
     }
 
-    /** Recarga la pista actual y renegocia la salida, conservando la posición (cambio de DAC, error, conmutador). */
     private fun reopenCurrent(resume: Boolean, posMs: Long) {
         if (index !in queue.indices) return
         if (!fdLoad(queue[index], false)) { Log.e(TAG, "no se pudo reabrir '${queue[index].title}'"); return }
@@ -191,7 +182,6 @@ class PlaybackController(private val context: Context) {
             lastPlaying = st == EngineState.PLAYING
             recoverTries = 0
         } else if (st == EngineState.ERROR) {
-            // p. ej. DAC desconectado (motor antiguo sin Suspended): reintentar (máx. 3 veces) en la misma posición
             val now = SystemClock.elapsedRealtime()
             if (recoverTries < 3 && now - lastRecoverAt > 2000) {
                 recoverTries++; lastRecoverAt = now
@@ -200,12 +190,9 @@ class PlaybackController(private val context: Context) {
                 return
             }
         }
-        // Estado Suspended: el motor nativo maneja la recuperación internamente (C++ recovery loop).
-        // Kotlin solo muestra el estado y espera que el motor recupere o timeout.
 
-        // Atenuado y de pronto empieza una llamada (se contestó mientras sonaba): pausar hasta que termine
         if (ducked && st == EngineState.PLAYING) {
-            modePoll = (modePoll + 1) % 4            // tick de 250 ms -> comprobar 1 vez por segundo
+            modePoll = (modePoll + 1) % 4
             if (modePoll == 0 && focus.inConversation()) {
                 Log.d(TAG, "conversacion en curso mientras estaba atenuado -> pausa hasta que termine")
                 engine.pause(); resumeOnFocus = true
@@ -221,7 +208,7 @@ class PlaybackController(private val context: Context) {
             streamInfo = engine.describe()
         }
         if (st == EngineState.ENDED && index + 1 < queue.size) { playIndex(index + 1); return }
-        if (st == EngineState.ENDED) focus.abandon()   // fin de la cola: liberar el foco
+        if (st == EngineState.ENDED) focus.abandon()
         if (st != lastState) { Log.d(TAG, "Estado motor: $lastState -> $st"); lastState = st }
         publish()
     }
@@ -249,7 +236,6 @@ class PlaybackController(private val context: Context) {
 
     private companion object {
         const val TAG = "HiFi.Controller"
-        /** Ganancia lineal durante la atenuación: 0.4 = 40 % de amplitud (unos -8 dB). */
         const val DUCK_VOLUME = 0.4f
     }
 }
