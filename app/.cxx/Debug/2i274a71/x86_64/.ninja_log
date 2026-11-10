@@ -13,3 +13,6 @@
 18	2681	8159856305227455	CMakeFiles/hifiengine.dir/jni_bridge.cpp.o	eee76506b8bb676e
 33	7652	8159856353843067	CMakeFiles/hifiengine.dir/AudioEngine.cpp.o	3ec3eb51579b7158
 7653	8758	8159856365979989	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8
+41	2889	8159920055382687	CMakeFiles/hifiengine.dir/jni_bridge.cpp.o	eee76506b8bb676e
+26	6633	8159920092528859	CMakeFiles/hifiengine.dir/AudioEngine.cpp.o	3ec3eb51579b7158
+6635	6973	8159920096163628	C:/dev/HiFiPlayer/app/build/intermediates/cxx/Debug/2i274a71/obj/x86_64/libhifiengine.so	59795e647aff91a8

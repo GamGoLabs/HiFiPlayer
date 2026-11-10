@@ -81,6 +81,7 @@ private:
     OutFmt mOutFmt = OutFmt::Float;
     uint32_t mChannels = 2, mFrameBytes = 8;
     std::atomic<uint32_t> mStreamRate{0};      // frecuencia REAL del stream (puede diferir de la de la pista)
+    std::atomic<bool> mResamplerActive{false}; // indica si hay resampling activo
 
     std::thread mThread;
     std::atomic<bool> mRun{false}, mEof{false}, mBitPerfect{true};

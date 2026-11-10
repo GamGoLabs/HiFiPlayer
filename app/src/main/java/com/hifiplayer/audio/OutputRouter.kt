@@ -39,6 +39,7 @@ class OutputRouter(context: Context, private val onRouteChanged: () -> Unit) {
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
     private var mixerDevice: AudioDeviceInfo? = null
+    @Volatile
     private var routeKey = 0
     private var loggedDevice = -1
 
@@ -81,7 +82,7 @@ class OutputRouter(context: Context, private val onRouteChanged: () -> Unit) {
         var forcedRate = 0
         var forcedFmt = -1
         var note = if (Build.VERSION.SDK_INT >= 34) "mezclador Android: sin modo bit-perfect compatible"
-                   else "mezclador bit-perfect requiere Android 14+"
+        else "mezclador bit-perfect requiere Android 14+"
         if (Build.VERSION.SDK_INT >= 34) {
             tryMixer(dev, srcRate, channels, bits)?.let { (r, f) ->
                 forcedRate = r; forcedFmt = f
@@ -99,18 +100,18 @@ class OutputRouter(context: Context, private val onRouteChanged: () -> Unit) {
             if (supported.isEmpty()) Log.d(TAG, "mezclador: el DAC no declara ningún modo (lista vacía)")
             supported.forEach {
                 Log.d(TAG, "mezclador: ${it.format.sampleRate} Hz ${encLabel(it.format.encoding)} " +
-                    "máscara=${it.format.channelMask} comportamiento=" +
-                    (if (it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT) "BIT_PERFECT" else "DEFAULT"))
+                        "máscara=${it.format.channelMask} comportamiento=" +
+                        (if (it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT) "BIT_PERFECT" else "DEFAULT"))
             }
         }
         val pref = when {
-            bits <= 16 -> intArrayOf(0, 2, 1, 3)    // exacto primero, luego contenedores mas anchos (todos sin perdida)
+            bits <= 16 -> intArrayOf(0, 2, 1, 3)
             bits <= 24 -> intArrayOf(2, 1, 3)
             else -> intArrayOf(2)
         }
         val matches = supported.filter {
             it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT &&
-                it.format.sampleRate == rate && it.format.channelMask.countOneBits() == channels
+                    it.format.sampleRate == rate && it.format.channelMask.countOneBits() == channels
         }
         for (f in pref) {
             val a = matches.firstOrNull { mapEncoding(it.format.encoding) == f } ?: continue
@@ -131,9 +132,9 @@ class OutputRouter(context: Context, private val onRouteChanged: () -> Unit) {
 
     private fun logCaps(dev: AudioDeviceInfo) {
         Log.d(TAG, "DAC id=${dev.id} nombre='${dev.productName}' tipo=${dev.type} " +
-            "frecuencias=${dev.sampleRates.joinToString()} " +
-            "codificaciones=${dev.encodings.joinToString { encLabel(it) }} " +
-            "canales=${dev.channelCounts.joinToString()}")
+                "frecuencias=${dev.sampleRates.joinToString()} " +
+                "codificaciones=${dev.encodings.joinToString { encLabel(it) }} " +
+                "canales=${dev.channelCounts.joinToString()}")
     }
 
     private var loggedMixer = -1
